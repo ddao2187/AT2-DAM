@@ -172,12 +172,6 @@ rm(var1) # Clean
 sum(duplicated(train))
 sum(duplicated(test))
 sum(duplicated(scrape))
-##### Print columns that have NA values (No columns have Null values)
-which(is.null(train) == TRUE)
-which(is.null(test) == TRUE)
-which(is.na(train) == TRUE) # There are around 27,600 missing values
-which(is.na(test) == TRUE) # There are around 6,200 missing values
-colnames(train)[colSums(is.na(train)) > 0]
 # Plot missing valuee
 missing.values <- aggr(train, sortVars = T, prop = T, 
                        sortCombs = T, cex.lab = 1.5, 
@@ -191,6 +185,12 @@ rm(missing.values) # Clean
 ############
 # Decision: More than 70% missing values matches between movies and zip_code => Drop zip_code_mean_rating
 ############
+# Check complete rows with no NA
+sum(complete.cases(train)) # 76060 / 80523 = 94.5%
+sum(complete.cases(test))  # 16154 / 19477 = 82.9%
+colSums(sapply(train, is.na))
+colSums(sapply(test, is.na))
+
 
 
 ##### Drop movies that is NA for Global rating and Top 1000 from Scrape
