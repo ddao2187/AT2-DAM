@@ -146,7 +146,7 @@ identical(levels(train$gender), levels(scrape_gender_age_specific$gender))
 identical(levels(train$age_band), levels(scrape_gender_age_specific$age_band))
 
 # Now remove the scrape dataset
-rm(scrape)
+#rm(scrape)
 
 # = Join everything together =================================================
 
