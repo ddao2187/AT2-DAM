@@ -1,12 +1,4 @@
-# Note:
-# 1. Dates: timestamp & release_date
-# 2. Movies: movie_title
-# 3. item_imdb_mature_rating
-# 4. Maybe* Remove NA values 
-
-#####################
-##### Load file #####
-#####################
+assign("last.warning", NULL, envir = baseenv()) # Clear all warnings
 # Clean
 rm(list=ls())
 library(ggplot2)
@@ -26,11 +18,166 @@ library(lubridate)
 library(forcats)
 library(caret)
 library(dplyr)
-# Webscraping data
-scrape = readRDS('scrape.rds')
-# STUDENT testing and training data
-test   =  readRDS('AT2_test_STUDENT.rds')
-train  = readRDS('AT2_train_STUDENT.rds')
+###############################
+##### AT2_prep_students.R #####
+###############################
+scrape <- readRDS('scrape.rds')
+test <-  readRDS('test_raw.rds')
+train <- readRDS('train_raw.rds')
+# IMDB webscraping general item data
+scrape_item_general <- scrape %>% select(movie_id, rating_of_ten:length,
+                                         imdb_staff_votes:top_1000_voters_average)
+# Add item_imdb_ to column names to disambiguate
+names(scrape_item_general)[c(-1,-6,-7)] <- paste0('imdb_', names(scrape_item_general)[c(-1,-6,-7)])
+names(scrape_item_general)[-1] <- paste0('item_', names(scrape_item_general)[-1])
+# User age bands (Train)
+train$age_band <- factor(case_when(
+  train$age < 18 ~ 'under_18',
+  train$age >= 18 & train$age <= 29 ~ '18_to_29',
+  train$age >= 30 & train$age <= 44 ~ '30_to_44',
+  train$age >= 45 ~ '45_and_over'),
+  levels = c('under_18', '18_to_29', '30_to_44', '45_and_over'),
+  ordered = TRUE # Don't order as makes modelling annoying
+)
+# User age bands (Test)
+test$age_band <- factor(case_when(
+  test$age < 18 ~ 'under_18',
+  test$age >= 18 & test$age <= 29 ~ '18_to_29',
+  test$age >= 30 & test$age <= 44 ~ '30_to_44',
+  test$age >= 45 ~ '45_and_over'),
+  levels = c('under_18', '18_to_29', '30_to_44', '45_and_over'),
+  ordered = TRUE # Don't order as makes modelling annoying
+)
+# Mean rating per item
+item_mean_ratings_train <- train %>% 
+  group_by(item_id) %>% 
+  summarise(item_mean_rating = mean(rating))
+# - Gender ratings per item
+user_gender_item_mean_ratings_train <- train %>% 
+  group_by(gender, item_id) %>% 
+  summarise(user_gender_item_mean_rating = mean(rating)) %>% 
+  ungroup()
+# - Age band ratings per item
+user_age_band_item_mean_ratings_train <- train %>% 
+  group_by(age_band, item_id) %>% 
+  summarise(user_age_band_item_mean_rating = mean(rating)) %>% 
+  ungroup()
+# - IMDB Gender ratings per item
+scrape_gender_specific <- scrape %>% 
+  select(movie_id, males_votes:females_average) %>% 
+  gather(key = gender_score, value = value, -movie_id, na.rm = TRUE) %>% 
+  separate(col = gender_score, into = c('gender', 'score_type')) %>% 
+  spread(key = score_type, value = value) %>% 
+  mutate(gender = fct_recode(gender, 'M' = 'males', 'F' = 'females'),
+         gender = fct_rev(gender)) %>% # To get the factor levels right
+  rename(item_id = movie_id,
+         user_gender_item_imdb_mean_rating = average,
+         user_gender_item_imdb_votes = votes)
+# Check levels are correct
+identical(levels(train$gender), levels(scrape_gender_specific$gender))
+# Rating based on zipcode
+zipcode_mean_ratings_train <- train %>% 
+  group_by(zip_code,item_id) %>% 
+  summarise(zipcode_mean_rating = mean(rating)) %>%
+  ungroup()
+# Rating based on occupation
+occupation_mean_ratings_train <- train %>% 
+  group_by(occupation,item_id) %>% 
+  summarise(occupation_mean_rating = mean(rating)) %>%
+  ungroup()
+# - Age band ratings per item
+scrape_age_specific <- scrape %>% 
+  select(movie_id, starts_with('aged')) %>% 
+  gather(key = age_score, value = value, -movie_id, na.rm = TRUE) %>% 
+  separate(col = age_score, into = c('age_band', 'score_type'), sep = '_a|_v') %>% 
+  spread(key = score_type, value = value) %>% 
+  mutate(age_band = fct_recode(age_band,
+                               'under_18' = 'aged_under_18',
+                               '18_to_29' = 'aged_18-29',
+                               '30_to_44' = 'aged_30_44',
+                               '45_and_over' = 'aged_45'),
+         age_band = factor(age_band,
+                           levels = c('under_18', '18_to_29', '30_to_44', '45_and_over'),
+                           ordered = TRUE)) %>% # To get the factor levels the same as ml_data 
+  rename(item_id = movie_id,
+         user_age_band_item_imdb_mean_rating = verage,
+         user_age_band_item_imdb_votes = otes)
+# Check levels are correct
+identical(levels(train$age_band), levels(scrape_age_specific$age_band))
+# - Gender-Age band ratings per item
+scrape_gender_age_specific <- scrape %>% 
+  select(movie_id, males_under_18_votes:females_under_18_average,
+         males_18_29_votes:females_18_29_average,
+         males_30_44_votes:females_30_44_average,
+         males_45_votes:females_45_average) %>% 
+  gather(key = gender_age_score, value = value, -movie_id, na.rm = TRUE) %>% 
+  separate(col = gender_age_score, into = c('gender', 'age_score_type'),
+           extra = 'merge') %>% 
+  separate(col = age_score_type, into = c('age_band', 'score_type'), sep = '_a|_v') %>% 
+  spread(key = score_type, value = value) %>% 
+  mutate(gender = fct_recode(gender, 'M' = 'males', 'F' = 'females'),
+         gender = fct_rev(gender),
+         age_band = fct_recode(age_band,
+                               'under_18' = 'under_18',
+                               '18_to_29' = '18_29',
+                               '30_to_44' = '30_44',
+                               '45_and_over' = '45'),
+         age_band = factor(age_band,
+                           levels = c('under_18', '18_to_29', '30_to_44', '45_and_over'),
+                           ordered = TRUE)) %>% # To get the factor levels the same as ml_data 
+  rename(item_id = movie_id,
+         user_gender_age_band_item_imdb_mean_rating = verage,
+         user_gender_age_band_item_imdb_votes = otes)
+# Check levels are correct
+identical(levels(train$gender), levels(scrape_gender_age_specific$gender))
+identical(levels(train$age_band), levels(scrape_gender_age_specific$age_band))
+# Joing Variables onto Train Data
+train <- train %>% 
+  # Train set specific joins
+  left_join(item_mean_ratings_train, by = 'item_id') %>% 
+  left_join(user_age_band_item_mean_ratings_train, by = c('age_band', 'item_id')) %>% 
+  left_join(user_gender_item_mean_ratings_train, by = c('gender', 'item_id')) %>%
+  # Scrape General joins (External dataset)
+  left_join(scrape_item_general, by = c('item_id' = 'movie_id')) %>%
+  left_join(scrape_gender_specific, by = c('gender', 'item_id')) %>% 
+  left_join(scrape_age_specific, by = c('age_band', 'item_id')) %>%
+  left_join(scrape_gender_age_specific, by = c('gender', 'age_band', 'item_id')) %>% 
+  left_join(zipcode_mean_ratings_train, by = c('zip_code', 'item_id')) %>%
+  left_join(occupation_mean_ratings_train, by = c('occupation', 'item_id')) %>%
+  # Scrape User_Gender_Age joins (External dataset)
+  mutate(user_id = factor(user_id),      # Make user and item factors
+         item_id = factor(item_id))
+# Joing Variables onto Test Data
+test <- test %>% 
+  # Train set specific joins
+  left_join(item_mean_ratings_train, by = 'item_id') %>% 
+  left_join(user_age_band_item_mean_ratings_train, by = c('age_band', 'item_id')) %>% 
+  left_join(user_gender_item_mean_ratings_train, by = c('gender', 'item_id')) %>% 
+  # Scrape General joins (External dataset)
+  left_join(scrape_item_general, by = c('item_id' = 'movie_id')) %>%
+  left_join(scrape_gender_specific, by = c('gender', 'item_id')) %>% 
+  left_join(scrape_age_specific, by = c('age_band', 'item_id')) %>%
+  left_join(scrape_gender_age_specific, by = c('gender', 'age_band', 'item_id')) %>% 
+  left_join(zipcode_mean_ratings_train, by = c('zip_code', 'item_id')) %>%
+  left_join(occupation_mean_ratings_train, by = c('occupation', 'item_id')) %>%
+  mutate(user_id = factor(user_id),      # Make user and item factors
+         item_id = factor(item_id))
+# Remove the variable sets (Train)
+rm(item_mean_ratings_train, 
+   user_gender_item_mean_ratings_train, user_age_band_item_mean_ratings_train)
+# Remove the varibale sets (Scrape)
+rm(scrape_age_specific, scrape_gender_age_specific, scrape_gender_specific, scrape_item_general)
+rm(occupation_mean_ratings_train,zipcode_mean_ratings_train) # Clean
+
+#################################################################################
+#################################################################################
+#################################################################################
+# Self Note:
+# 1. Dates: timestamp & release_date
+# 2. Movies: movie_title
+# 3. item_imdb_mature_rating
+# 4. Maybe* Remove NA values 
+
 # Duplicate for testing
 original_test  = test
 original_train = train
@@ -55,31 +202,6 @@ train$age_band = NULL
 # The rating based on gender is already being calculated
 test$gender  = NULL
 train$gender = NULL
-# Rating based on zipcode
-zipcode_mean_ratings_train <- train %>% 
-  group_by(zip_code,item_id) %>% 
-  summarise(zipcode_mean_rating = mean(rating)) %>%
-  ungroup()
-# Rating based on occupation
-occupation_mean_ratings_train <- train %>% 
-  group_by(occupation,item_id) %>% 
-  summarise(occupation_mean_rating = mean(rating)) %>%
-  ungroup()
-# Convert to merge
-zipcode_mean_ratings_train$item_id = as.numeric(zipcode_mean_ratings_train$item_id)
-occupation_mean_ratings_train$item_id = as.numeric(occupation_mean_ratings_train$item_id)
-train$item_id = as.numeric(train$item_id)
-test$item_id = as.numeric(test$item_id)
-# Join
-train <- train %>% 
-  left_join(zipcode_mean_ratings_train, by = c('zip_code', 'item_id')) %>%
-  left_join(occupation_mean_ratings_train, by = c('occupation', 'item_id')) %>%
-  mutate(item_id = factor(item_id))
-test <- test %>% 
-  left_join(zipcode_mean_ratings_train, by = c('zip_code', 'item_id')) %>%
-  left_join(occupation_mean_ratings_train, by = c('occupation', 'item_id')) %>%
-  mutate(item_id = factor(item_id))
-rm(occupation_mean_ratings_train,zipcode_mean_ratings_train) # Clean
 # Drop variables occupation and zip_code because already calculated the rating
 train$zip_code   = NULL
 test$zip_code    = NULL
@@ -95,6 +217,141 @@ test$zipcode_mean_rating = NULL
 # Low variability in genres average user rating
 train[,7:25] = NULL
 test[,6:24] = NULL
+
+#################################################################
+##### Remove item_id from train that does not exist in test #####
+#################################################################
+
+
+
+
+
+
+
+
+
+
+
+
+
+#############################
+##### Replace NA values #####
+#############################
+scrape.NA <- scrape[rowSums(is.na(scrape)) > 37,]
+##### For train set
+val11 = min(train$item_imdb_count_ratings, na.rm = TRUE)
+val13 = min(train$item_imdb_length, na.rm = TRUE)
+val14 = min(train$item_imdb_staff_votes, na.rm = TRUE)
+val16 = min(train$item_imdb_top_1000_voters_votes, na.rm = TRUE)
+val19 = min(train$user_gender_item_imdb_votes, na.rm = TRUE)
+val20 = min(train$user_age_band_item_imdb_votes, na.rm = TRUE)
+val22 = min(train$user_gender_age_band_item_imdb_votes, na.rm = TRUE)
+for (i in 1:nrow(train)) {
+  if (sum(train$item_id[i] == scrape.NA$movie_id) == 1) {
+    if (is.na(train[i,13])) { # Check
+      train[i,13] = val13 # Average movie length
+    }
+    # All missing is replaced by mean user rating of that item * 2 (imdb rating is out of 10)
+    if (is.na(train[i,10])) {
+      train[i,10] = colMeans(train[which(train$item_id == train$item_id[i]),3], na.rm = TRUE) * 2L
+    }
+    if (is.na(train[i,15])) { 
+      train[i,15] = colMeans(train[which(train$item_id == train$item_id[i]),3], na.rm = TRUE) * 2L
+    }
+    if (is.na(train[i,17])) { 
+      train[i,17] = colMeans(train[which(train$item_id == train$item_id[i]),3], na.rm = TRUE) * 2L
+    }
+    if (is.na(train[i,18])) { 
+      train[i,18] = colMeans(train[which(train$item_id == train$item_id[i]),3], na.rm = TRUE) * 2L
+    }
+    if (is.na(train[i,21])) { 
+      train[i,21] = colMeans(train[which(train$item_id == train$item_id[i]),3], na.rm = TRUE) * 2L
+    }
+    if (is.na(train[i,23])) { 
+      train[i,23] = colMeans(train[which(train$item_id == train$item_id[i]),3], na.rm = TRUE) * 2L
+    }
+    # All vote counts is replaced by the mean
+    if (is.na(train[i,11])) { 
+      train[i,11] = val11
+    }
+    if (is.na(train[i,14])) { 
+      train[i,14] = val14
+    }
+    if (is.na(train[i,16])) { 
+      train[i,16] = val16
+    }
+    if (is.na(train[i,19])) { 
+      train[i,19] = val19
+    }
+    if (is.na(train[i,20])) { 
+      train[i,20] = val20
+    }
+    if (is.na(train[i,22])) { 
+      train[i,22] = val22
+    }
+  }
+}
+rm(val11,val13,val14,val16,val19,val20,val22,i) # Clean
+
+##### For test set
+val10 = min(test$item_imdb_count_ratings, na.rm = TRUE)
+val12 = min(test$item_imdb_length, na.rm = TRUE)
+val13 = min(test$item_imdb_staff_votes, na.rm = TRUE)
+val15 = min(test$item_imdb_top_1000_voters_votes, na.rm = TRUE)
+val18 = min(test$user_gender_item_imdb_votes, na.rm = TRUE)
+val19 = min(test$user_age_band_item_imdb_votes, na.rm = TRUE)
+val21 = min(test$user_gender_age_band_item_imdb_votes, na.rm = TRUE)
+for (i in 1:nrow(test)) {
+  if (sum(test$item_id[i] == scrape.NA$movie_id) == 1) {
+    if (is.na(test[i,12])) { # Check
+      test[i,12] = val12 # Average movie length
+    }
+#    # All missing is replaced by user rating * 2 (imdb rating is out of 10)
+#    if (is.na(test[i,9])) { 
+#      test[i,9] = colMeans(test[which(test$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
+#    }
+#    if (is.na(test[i,14])) { 
+#      test[i,14] = colMeans(test[which(test$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
+#    }
+#    if (is.na(test[i,16])) { 
+#      test[i,16:17] = colMeans(test[which(test$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
+#    }
+#    if (is.na(test[i,17])) { 
+#      test[i,16:17] = colMeans(test[which(test$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
+#    }
+#   if (is.na(test[i,20])) { 
+#      test[i,20] = colMeans(test[which(test$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
+#    }
+#    if (is.na(test[i,22])) { 
+#      test[i,22] = colMeans(test[which(test$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
+#    }
+    # All vote counts is replaced by the mean
+    if (is.na(test[i,10])) { 
+      test[i,10] = val10
+    }
+    if (is.na(test[i,13])) { 
+      test[i,13] = val13
+    }
+    if (is.na(test[i,15])) { 
+      test[i,15] = val15
+    }
+    if (is.na(test[i,18])) { 
+      test[i,18] = val18
+    }
+    if (is.na(test[i,19])) { 
+      test[i,19] = val19
+    }
+    if (is.na(test[i,21])) { 
+      test[i,21] = val21
+    }
+  }
+}
+rm(val10,val12,val13,val15,val18,val19,val21,i,scrape.NA) # Clean
+
+
+
+
+
 
 ###############
 ##### EDA #####
@@ -183,7 +440,10 @@ missing.values <- aggr(test, sortVars = T, prop = T,
                        combined = F, gap = -.2)
 rm(missing.values) # Clean
 ############
-# Decision: More than 70% missing values matches between movies and zip_code => Drop zip_code_mean_rating
+# Decision: 
+# 1. More than 70% missing values matches between movies and zip_code => Drop zip_code_mean_rating
+# 2. Replace NA values of IMDB ratings with user rating * 2.
+# 3. Vote numbers & movie length = minimum values
 ############
 # Check complete rows with no NA
 sum(complete.cases(train)) # 76060 / 80523 = 94.5%
@@ -192,6 +452,10 @@ colSums(sapply(train, is.na))
 colSums(sapply(test, is.na))
 
 
+
+
+
+check = table(test$occupation)
 
 ##### Drop movies that is NA for Global rating and Top 1000 from Scrape
 #drop = which(is.na(scrape$rating_of_ten) == TRUE) # Global rating = NA
