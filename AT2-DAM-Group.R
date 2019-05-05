@@ -143,10 +143,10 @@ train <- train %>%
   left_join(scrape_age_specific, by = c('age_band', 'item_id')) %>%
   left_join(scrape_gender_age_specific, by = c('gender', 'age_band', 'item_id')) %>% 
   left_join(zipcode_mean_ratings_train, by = c('zip_code', 'item_id')) %>%
-  left_join(occupation_mean_ratings_train, by = c('occupation', 'item_id')) %>%
+  left_join(occupation_mean_ratings_train, by = c('occupation', 'item_id')) #%>%
   # Scrape User_Gender_Age joins (External dataset)
-  mutate(user_id = factor(user_id),      # Make user and item factors
-         item_id = factor(item_id))
+#  mutate(user_id = factor(user_id),      # Make user and item factors
+#         item_id = factor(item_id))
 # Joing Variables onto Test Data
 test <- test %>% 
   # Train set specific joins
@@ -159,9 +159,9 @@ test <- test %>%
   left_join(scrape_age_specific, by = c('age_band', 'item_id')) %>%
   left_join(scrape_gender_age_specific, by = c('gender', 'age_band', 'item_id')) %>% 
   left_join(zipcode_mean_ratings_train, by = c('zip_code', 'item_id')) %>%
-  left_join(occupation_mean_ratings_train, by = c('occupation', 'item_id')) %>%
-  mutate(user_id = factor(user_id),      # Make user and item factors
-         item_id = factor(item_id))
+  left_join(occupation_mean_ratings_train, by = c('occupation', 'item_id')) #%>%
+#  mutate(user_id = factor(user_id),      # Make user and item factors
+#         item_id = factor(item_id))
 # Remove the variable sets (Train)
 rm(item_mean_ratings_train, 
    user_gender_item_mean_ratings_train, user_age_band_item_mean_ratings_train)
@@ -221,8 +221,10 @@ test[,6:24] = NULL
 #################################################################
 ##### Remove item_id from train that does not exist in test #####
 #################################################################
-
-
+# Reason: Factor of train and test does not match
+train.t = train
+test.t = test
+checking = train.t %>% semi_join(test.t, by = "user_item") # keep rows with matching ID
 
 
 
@@ -237,6 +239,9 @@ test[,6:24] = NULL
 #############################
 ##### Replace NA values #####
 #############################
+# Note: Replace NA values of movies not available from scrape for train and test set.
+# For train, ratings will be replaced by the user rating * 2L, votes will be replaced by min
+# For test, rating will be replaced by user rating * 2L of from train.
 scrape.NA <- scrape[rowSums(is.na(scrape)) > 37,]
 ##### For train set
 val11 = min(train$item_imdb_count_ratings, na.rm = TRUE)
@@ -294,6 +299,7 @@ for (i in 1:nrow(train)) {
 rm(val11,val13,val14,val16,val19,val20,val22,i) # Clean
 
 ##### For test set
+# Note: Rating will be based on rating from the train
 val10 = min(test$item_imdb_count_ratings, na.rm = TRUE)
 val12 = min(test$item_imdb_length, na.rm = TRUE)
 val13 = min(test$item_imdb_staff_votes, na.rm = TRUE)
@@ -306,25 +312,25 @@ for (i in 1:nrow(test)) {
     if (is.na(test[i,12])) { # Check
       test[i,12] = val12 # Average movie length
     }
-#    # All missing is replaced by user rating * 2 (imdb rating is out of 10)
-#    if (is.na(test[i,9])) { 
-#      test[i,9] = colMeans(test[which(test$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
-#    }
-#    if (is.na(test[i,14])) { 
-#      test[i,14] = colMeans(test[which(test$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
-#    }
-#    if (is.na(test[i,16])) { 
-#      test[i,16:17] = colMeans(test[which(test$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
-#    }
-#    if (is.na(test[i,17])) { 
-#      test[i,16:17] = colMeans(test[which(test$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
-#    }
-#   if (is.na(test[i,20])) { 
-#      test[i,20] = colMeans(test[which(test$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
-#    }
-#    if (is.na(test[i,22])) { 
-#      test[i,22] = colMeans(test[which(test$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
-#    }
+    # All missing is replaced by user rating * 2 (imdb rating is out of 10)
+    if (is.na(test[i,9])) { 
+      test[i,9] = colMeans(train[which(train$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
+    }
+    if (is.na(test[i,14])) { 
+      test[i,14] = colMeans(train[which(train$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
+    }
+    if (is.na(test[i,16])) { 
+      test[i,16:17] = colMeans(train[which(train$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
+    }
+    if (is.na(test[i,17])) { 
+      test[i,16:17] = colMeans(train[which(train$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
+    }
+   if (is.na(test[i,20])) { 
+      test[i,20] = colMeans(train[which(train$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
+    }
+    if (is.na(test[i,22])) { 
+      test[i,22] = colMeans(train[which(train$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
+    }
     # All vote counts is replaced by the mean
     if (is.na(test[i,10])) { 
       test[i,10] = val10
