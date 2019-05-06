@@ -12,6 +12,7 @@ library(plotly)
 library(corrplot)
 library(GGally)
 library(caret)
+library(hydroGOF)
 # Load packages
 library(tidyverse)
 library(lubridate)
@@ -22,7 +23,7 @@ library(dplyr)
 ##### AT2_prep_students.R #####
 ###############################
 scrape <- readRDS('scrape.rds')
-test <-  readRDS('test_raw.rds')
+validation <-  readRDS('test_raw.rds')
 train <- readRDS('train_raw.rds')
 # IMDB webscraping general item data
 scrape_item_general <- scrape %>% select(movie_id, rating_of_ten:length,
@@ -40,11 +41,11 @@ train$age_band <- factor(case_when(
   ordered = TRUE # Don't order as makes modelling annoying
 )
 # User age bands (Test)
-test$age_band <- factor(case_when(
-  test$age < 18 ~ 'under_18',
-  test$age >= 18 & test$age <= 29 ~ '18_to_29',
-  test$age >= 30 & test$age <= 44 ~ '30_to_44',
-  test$age >= 45 ~ '45_and_over'),
+validation$age_band <- factor(case_when(
+  validation$age < 18 ~ 'under_18',
+  validation$age >= 18 & validation$age <= 29 ~ '18_to_29',
+  validation$age >= 30 & validation$age <= 44 ~ '30_to_44',
+  validation$age >= 45 ~ '45_and_over'),
   levels = c('under_18', '18_to_29', '30_to_44', '45_and_over'),
   ordered = TRUE # Don't order as makes modelling annoying
 )
@@ -144,11 +145,11 @@ train <- train %>%
   left_join(scrape_gender_age_specific, by = c('gender', 'age_band', 'item_id')) %>% 
   left_join(zipcode_mean_ratings_train, by = c('zip_code', 'item_id')) %>%
   left_join(occupation_mean_ratings_train, by = c('occupation', 'item_id')) #%>%
-  # Scrape User_Gender_Age joins (External dataset)
+# Scrape User_Gender_Age joins (External dataset)
 #  mutate(user_id = factor(user_id),      # Make user and item factors
 #         item_id = factor(item_id))
 # Joing Variables onto Test Data
-test <- test %>% 
+validation <- validation %>% 
   # Train set specific joins
   left_join(item_mean_ratings_train, by = 'item_id') %>% 
   left_join(user_age_band_item_mean_ratings_train, by = c('age_band', 'item_id')) %>% 
@@ -169,6 +170,16 @@ rm(item_mean_ratings_train,
 rm(scrape_age_specific, scrape_gender_age_specific, scrape_gender_specific, scrape_item_general)
 rm(occupation_mean_ratings_train,zipcode_mean_ratings_train) # Clean
 
+###############################
+##### Reorder the columns #####
+###############################
+train = train[,c(1,6,7,                   # Main
+                 33:36,41,43,44,47,49:51, # Rating (7:14 ~ Rating of 10, 3:5 ~ Rating of 5)
+                 37,40,42,45,46,48,       # Vote number (15:19)
+                 38,39,2:5,8:31)]         # Others
+validation = validation[,names(train[,-3])] # Copy column order to validation
+names(validation) == names(train[,-3]) # Check
+
 #################################################################################
 #################################################################################
 #################################################################################
@@ -177,182 +188,170 @@ rm(occupation_mean_ratings_train,zipcode_mean_ratings_train) # Clean
 # 2. Movies: movie_title
 # 3. item_imdb_mature_rating
 # 4. Maybe* Remove NA values 
-
-# Duplicate for testing
-original_test  = test
-original_train = train
-
+# Factor mature rating
+train$item_imdb_mature_rating = factor(train$item_imdb_mature_rating)
+validation$item_imdb_mature_rating = factor(validation$item_imdb_mature_rating)
+identical(levels(train$item_imdb_mature_rating), levels(validation$item_imdb_mature_rating)) # Check
 ##################################
 ##### Drop obvious variables #####
 ##################################
 # NULL values
-test$video_release_date  = NULL
+validation$video_release_date  = NULL
 train$video_release_date = NULL
 # Useless of analyse
-test$imdb_url  = NULL
+validation$imdb_url  = NULL
 train$imdb_url = NULL
 # Replacement by item_id
-#test$movie_title  = NULL
+#validation$movie_title  = NULL
 #train$movie_title = NULL
 # The rating based on age is already being calculated
-test$age  = NULL
+validation$age  = NULL
 train$age = NULL
-test$age_band  = NULL
+validation$age_band  = NULL
 train$age_band = NULL
 # The rating based on gender is already being calculated
-test$gender  = NULL
+validation$gender  = NULL
 train$gender = NULL
 # Drop variables occupation and zip_code because already calculated the rating
 train$zip_code   = NULL
-test$zip_code    = NULL
+validation$zip_code    = NULL
 train$occupation = NULL
-test$occupation  = NULL
+validation$occupation  = NULL
 
 ##########################################
 ##### Drop variables with reasonings ##### 
 ##########################################
 # High missing matches (70%) between item_id and zipcodes
 train$zipcode_mean_rating = NULL
-test$zipcode_mean_rating = NULL
+validation$zipcode_mean_rating = NULL
 # Low variability in genres average user rating
-train[,7:25] = NULL
-test[,6:24] = NULL
-
-#################################################################
-##### Remove item_id from train that does not exist in test #####
-#################################################################
-# Reason: Factor of train and test does not match
-train.t = train
-test.t = test
-checking = train.t %>% semi_join(test.t, by = "user_item") # keep rows with matching ID
-
-
-
-
-
-
-
-
-
-
+validation[,names(train[,25:ncol(train)])] = NULL
+train[,25:ncol(train)] = NULL
 
 #############################
 ##### Replace NA values #####
 #############################
-# Note: Replace NA values of movies not available from scrape for train and test set.
+# Note: Replace NA values of movies not available from scrape for train and validation set.
 # For train, ratings will be replaced by the user rating * 2L, votes will be replaced by min
-# For test, rating will be replaced by user rating * 2L of from train.
-scrape.NA <- scrape[rowSums(is.na(scrape)) > 37,]
+# For validation, rating will be replaced by user rating * 2L of from train.
+scrape.NA <- scrape[rowSums(is.na(scrape)) > 37,] # Movies with empty values
 ##### For train set
-val11 = min(train$item_imdb_count_ratings, na.rm = TRUE)
-val13 = min(train$item_imdb_length, na.rm = TRUE)
-val14 = min(train$item_imdb_staff_votes, na.rm = TRUE)
-val16 = min(train$item_imdb_top_1000_voters_votes, na.rm = TRUE)
-val19 = min(train$user_gender_item_imdb_votes, na.rm = TRUE)
-val20 = min(train$user_age_band_item_imdb_votes, na.rm = TRUE)
-val22 = min(train$user_gender_age_band_item_imdb_votes, na.rm = TRUE)
+val = train[1,14:19]
+count = 1
+for (i in 14:19) {
+  val[1,count] = min(train[,i], na.rm = TRUE)
+  count = count + 1
+}
+rm(i,count)
+val_l = min(train$item_imdb_length, na.rm = TRUE)
 for (i in 1:nrow(train)) {
   if (sum(train$item_id[i] == scrape.NA$movie_id) == 1) {
-    if (is.na(train[i,13])) { # Check
-      train[i,13] = val13 # Average movie length
+    if (is.na(train[i,21])) { # Check
+      train[i,21] = val_l # Average movie length
     }
     # All missing is replaced by mean user rating of that item * 2 (imdb rating is out of 10)
-    if (is.na(train[i,10])) {
+    if (is.na(train[i,7])) {
+      train[i,7] = colMeans(train[which(train$item_id == train$item_id[i]),3], na.rm = TRUE) * 2L
+    }
+    if (is.na(train[i,8])) { 
+      train[i,8] = colMeans(train[which(train$item_id == train$item_id[i]),3], na.rm = TRUE) * 2L
+    }
+    if (is.na(train[i,9])) { 
+      train[i,9] = colMeans(train[which(train$item_id == train$item_id[i]),3], na.rm = TRUE) * 2L
+    }
+    if (is.na(train[i,10])) { 
       train[i,10] = colMeans(train[which(train$item_id == train$item_id[i]),3], na.rm = TRUE) * 2L
     }
-    if (is.na(train[i,15])) { 
-      train[i,15] = colMeans(train[which(train$item_id == train$item_id[i]),3], na.rm = TRUE) * 2L
+    if (is.na(train[i,11])) { 
+      train[i,11] = colMeans(train[which(train$item_id == train$item_id[i]),3], na.rm = TRUE) * 2L
     }
-    if (is.na(train[i,17])) { 
-      train[i,17] = colMeans(train[which(train$item_id == train$item_id[i]),3], na.rm = TRUE) * 2L
-    }
-    if (is.na(train[i,18])) { 
-      train[i,18] = colMeans(train[which(train$item_id == train$item_id[i]),3], na.rm = TRUE) * 2L
-    }
-    if (is.na(train[i,21])) { 
-      train[i,21] = colMeans(train[which(train$item_id == train$item_id[i]),3], na.rm = TRUE) * 2L
-    }
-    if (is.na(train[i,23])) { 
-      train[i,23] = colMeans(train[which(train$item_id == train$item_id[i]),3], na.rm = TRUE) * 2L
+    if (is.na(train[i,12])) { 
+      train[i,12] = colMeans(train[which(train$item_id == train$item_id[i]),3], na.rm = TRUE) * 2L
     }
     # All vote counts is replaced by the mean
-    if (is.na(train[i,11])) { 
-      train[i,11] = val11
-    }
     if (is.na(train[i,14])) { 
-      train[i,14] = val14
+      train[i,14] = val[1,1]
+    }
+    if (is.na(train[i,15])) { 
+      train[i,15] = val[1,2]
     }
     if (is.na(train[i,16])) { 
-      train[i,16] = val16
+      train[i,16] = val[1,3]
+    }
+    if (is.na(train[i,17])) { 
+      train[i,17] = val[1,4]
+    }
+    if (is.na(train[i,18])) { 
+      train[i,18] = val[1,5]
     }
     if (is.na(train[i,19])) { 
-      train[i,19] = val19
-    }
-    if (is.na(train[i,20])) { 
-      train[i,20] = val20
-    }
-    if (is.na(train[i,22])) { 
-      train[i,22] = val22
+      train[i,19] = val[1,6]
     }
   }
 }
-rm(val11,val13,val14,val16,val19,val20,val22,i) # Clean
+rm(i,val_l,val) # Clean
 
-##### For test set
-# Note: Rating will be based on rating from the train
-val10 = min(test$item_imdb_count_ratings, na.rm = TRUE)
-val12 = min(test$item_imdb_length, na.rm = TRUE)
-val13 = min(test$item_imdb_staff_votes, na.rm = TRUE)
-val15 = min(test$item_imdb_top_1000_voters_votes, na.rm = TRUE)
-val18 = min(test$user_gender_item_imdb_votes, na.rm = TRUE)
-val19 = min(test$user_age_band_item_imdb_votes, na.rm = TRUE)
-val21 = min(test$user_gender_age_band_item_imdb_votes, na.rm = TRUE)
-for (i in 1:nrow(test)) {
-  if (sum(test$item_id[i] == scrape.NA$movie_id) == 1) {
-    if (is.na(test[i,12])) { # Check
-      test[i,12] = val12 # Average movie length
+##### For validation set
+# Note: Rating of validation will be based on rating from the train
+val = validation[1,13:18]
+count = 1
+for (i in 13:18) {
+  val[1,count] = min(validation[,i], na.rm = TRUE)
+  count = count + 1
+}
+rm(i,count)
+val_l = min(validation$item_imdb_length, na.rm = TRUE)
+for (i in 1:nrow(validation)) {
+  if (sum(validation$item_id[i] == scrape.NA$movie_id) == 1) {
+    if (is.na(train[i,20])) { # Check
+      train[i,20] = val_l # Average movie length
     }
-    # All missing is replaced by user rating * 2 (imdb rating is out of 10)
-    if (is.na(test[i,9])) { 
-      test[i,9] = colMeans(train[which(train$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
+    # All missing is replaced by mean user rating of that item * 2 (imdb rating is out of 10)
+    if (is.na(validation[i,6])) {
+      validation[i,6] = colMeans(train[which(train$item_id == validation$item_id[i]),3], na.rm = TRUE) * 2L
     }
-    if (is.na(test[i,14])) { 
-      test[i,14] = colMeans(train[which(train$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
+    if (is.na(validation[i,7])) { 
+      validation[i,7] = colMeans(train[which(train$item_id == validation$item_id[i]),3], na.rm = TRUE) * 2L
     }
-    if (is.na(test[i,16])) { 
-      test[i,16:17] = colMeans(train[which(train$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
+    if (is.na(validation[i,8])) { 
+      validation[i,8] = colMeans(train[which(train$item_id == validation$item_id[i]),3], na.rm = TRUE) * 2L
     }
-    if (is.na(test[i,17])) { 
-      test[i,16:17] = colMeans(train[which(train$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
+    if (is.na(validation[i,9])) { 
+      validation[i,9] = colMeans(train[which(train$item_id == validation$item_id[i]),3], na.rm = TRUE) * 2L
     }
-   if (is.na(test[i,20])) { 
-      test[i,20] = colMeans(train[which(train$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
+    if (is.na(validation[i,10])) { 
+      validation[i,10] = colMeans(train[which(train$item_id == validation$item_id[i]),3], na.rm = TRUE) * 2L
     }
-    if (is.na(test[i,22])) { 
-      test[i,22] = colMeans(train[which(train$item_id == test$item_id[i]),3], na.rm = TRUE) * 2L
+    if (is.na(validation[i,11])) { 
+      validation[i,11] = colMeans(train[which(train$item_id == train$item_id[i]),3], na.rm = TRUE) * 2L
     }
     # All vote counts is replaced by the mean
-    if (is.na(test[i,10])) { 
-      test[i,10] = val10
+    if (is.na(validation[i,13])) { 
+      validation[i,13] = val[1,1]
     }
-    if (is.na(test[i,13])) { 
-      test[i,13] = val13
+    if (is.na(validation[i,14])) { 
+      validation[i,14] = val[1,2]
     }
-    if (is.na(test[i,15])) { 
-      test[i,15] = val15
+    if (is.na(validation[i,15])) { 
+      validation[i,15] = val[1,3]
     }
-    if (is.na(test[i,18])) { 
-      test[i,18] = val18
+    if (is.na(validation[i,16])) { 
+      validation[i,16] = val[1,4]
     }
-    if (is.na(test[i,19])) { 
-      test[i,19] = val19
+    if (is.na(validation[i,17])) { 
+      validation[i,17] = val[1,5]
     }
-    if (is.na(test[i,21])) { 
-      test[i,21] = val21
+    if (is.na(validation[i,18])) { 
+      validation[i,18] = val[1,6]
     }
   }
 }
-rm(val10,val12,val13,val15,val18,val19,val21,i,scrape.NA) # Clean
+rm(i,val_l,val,scrape.NA) # Clean
+
+##### Scale down IMDB rating into 5 points rating
+train[,7:12] = train[,7:12] / 2L
+validation[,6:11] = validation[,6:11] / 2L
+
 
 
 
@@ -363,8 +362,8 @@ rm(val10,val12,val13,val15,val18,val19,val21,i,scrape.NA) # Clean
 ##### EDA #####
 ###############
 ##### Plot rating based on genres
-# Make a new data frame for ease of plot
-genres.df = train[,7:25]
+# Note: Run from line 1 to 182 first
+genres.df = train[,32:50]
 genres.df[,20] = train[,3]
 record = genres.df[1,1:19] # For record
 record[1,] = 0
@@ -380,9 +379,12 @@ for (j in 1:19) {
   count = 0
   print("Loading")
 }
+min(record)
+max(record)
+glimpse(record)
 rm(i,j,count,genres.df,record)
 ############
-# Decision: Genres ranges from 3.2 to 3.9.1: Not significant => Drop all genres.
+# Decision: Genres ranges from 3.199629 to 3.916488 out of 5: Not significant => Drop all genres.
 ############
 
 ##### Plot rating based on IMDB rating
@@ -423,52 +425,57 @@ ggplot(data = var1, aes(x = rating, y = user_age_band_item_mean_rating)) +
   geom_jitter() +  geom_smooth(method = "lm") + ggtitle("Rating of User vs. By age_band")
 rm(var1) # Clean
 
-
-
-
-
+##### Plot rating based on item_imdb_mature_rating rating
+var1 = train %>%
+  select_at(vars("user_id","rating","item_imdb_mature_rating")) %>%
+  group_by(item_imdb_mature_rating) %>%
+  summarise_at(vars("rating"), funs("mean"))
+# Plot
+ggplot(data = var1, aes(x = item_imdb_mature_rating, y = rating)) +
+  geom_bar(stat="identity") +  geom_smooth(method = "lm") + ggtitle("Ratings based on mature rate")
+rm(var1) # Clean
 
 #########################
 ##### Data cleaning #####
 #########################
 # Check for duplication: None
 sum(duplicated(train))
-sum(duplicated(test))
+sum(duplicated(validation))
 sum(duplicated(scrape))
 # Plot missing valuee
 missing.values <- aggr(train, sortVars = T, prop = T, 
                        sortCombs = T, cex.lab = 1.5, 
                        cex.axis = .6, cex.numbers = 5, 
                        combined = F, gap = -.2)
-missing.values <- aggr(test, sortVars = T, prop = T, 
+missing.values <- aggr(validation, sortVars = T, prop = T, 
                        sortCombs = T, cex.lab = 1.5, 
                        cex.axis = .6, cex.numbers = 5, 
                        combined = F, gap = -.2)
 rm(missing.values) # Clean
+# Check complete rows with no NA
+sum(complete.cases(train)) # 76060 / 80523 = 94.5%
+sum(complete.cases(validation))  # 16154 / 19477 = 82.9%
+colSums(sapply(train, is.na))
+colSums(sapply(validation, is.na))
+colSums(sapply(train_n, is.na))
 ############
 # Decision: 
 # 1. More than 70% missing values matches between movies and zip_code => Drop zip_code_mean_rating
 # 2. Replace NA values of IMDB ratings with user rating * 2.
 # 3. Vote numbers & movie length = minimum values
 ############
-# Check complete rows with no NA
-sum(complete.cases(train)) # 76060 / 80523 = 94.5%
-sum(complete.cases(test))  # 16154 / 19477 = 82.9%
-colSums(sapply(train, is.na))
-colSums(sapply(test, is.na))
 
 
 
 
-
-check = table(test$occupation)
+check = table(validation$occupation)
 
 ##### Drop movies that is NA for Global rating and Top 1000 from Scrape
 #drop = which(is.na(scrape$rating_of_ten) == TRUE) # Global rating = NA
 #drop1 = which(is.na(scrape$top_1000_voters_average) == TRUE) # Top 1000 = NA
 #drop0 = unique(sort(c(drop,drop1)))
 #train <- train[!train$item_id %in% scrape$movie_id[drop0],]
-#test <- test[!test$item_id %in% scrape$movie_id[drop0],]
+#validation <- validation[!validation$item_id %in% scrape$movie_id[drop0],]
 #rm(drop,drop1,drop0) # Clean
 
 
@@ -501,21 +508,92 @@ corrplot::corrplot(re_corr, method="number")
 rm(num_vars,re_nums,re_corr) # Clean
 # Note: Remove all variables >= 0.8 corelation
 
-##### Linear Regression
-train_n = train # R = 0.4477 & 0.4144
-train_n$user_id = NULL
-train_n$item_id = NULL
-regres <- lm(rating ~ ., data=train_n[1:10000,])
-summary(regres)
-rm(regres,train_n) # Clean
+####################
+##### Cheating #####
+####################
+#trainset_indices <- sample(seq_len(nrow(train)), size = 20000) # Reduce the data size
+#train_n <- train[trainset_indices, ]
+train_n = train
+train_n = train_n[order(train_n$item_id),] # Re-order by item_id
+#rm(trainset_indices)
+
+# Temporary drop to make regression running (able to make prediction)
+train_n$movie_title = NULL
+validation$movie_title = NULL
+train_n$release_date = NULL
+validation$release_date = NULL
+train_n$timestamp = NULL
+validation$timestamp = NULL
+#train_n$item_imdb_mature_rating = NULL
+#validation$item_imdb_mature_rating = NULL
+# Factor rating
+#train_n$rating = factor(train_n$rating)
+
+# Replace all NA values by 0
+train_n[is.na(train_n)] <- 0
+validation[is.na(validation)] <- 0
+
+#############################
+##### Linear Regression #####
+#############################
+# Reduce DF size and split trainset and testset appropriately
+# trainset: train_n
+# testset: testset
+set.seed(1)
+# Initiate empty testset
+testset = train_n[0,]
+dummy = 0
+count = 1
+for (i in 1:nrow(train_n)) {
+  if (train_n$item_id[i] > dummy) {
+    dummy = train_n$item_id[i]
+    testset[count,] = train_n[i,]
+    count = count + 1
+  }
+}
+rm(i,dummy,count)
+# Check
+length(unique(train_n$item_id)) == length(unique(testset$item_id))
+# Train the model
+regres <- glm(rating ~ ., data=train_n)
+# Rate RMSE
+testset$prediction = predict(regres, testset, type = "response")
+# Check if any rating > 5 (wrong)
+testset$prediction = floor(testset$prediction)
+which(testset$prediction > 5L)
+which(testset$prediction < 0L)
+
+rmse(testset$rating, testset$prediction)
+length(which(is.na(testset$prediction) == TRUE)) / nrow(testset) # % of missing values 
+rm(train_n,testset) # Clean
+
+# Record notes:
+
 
 ####################
 ##### FINALIZE #####
 ####################
-##### Concatenate user_id and item_id together then remove the 2 used variables for both test and train
-train$user_item = paste(train$user_id, train$item_id, sep = "_")
-train$user_id = NULL
-train$item_id = NULL
-test$user_item = paste(test$user_id, test$item_id, sep = "_")
-test$user_id = NULL
-test$item_id = NULL
+validation$prediction = predict(regres, validation, type = "response")
+##### Concatenate user_id and item_id together then remove the 2 used variables for both testset and train
+validation$user_item = paste(validation$user_id, validation$item_id, sep = "_")
+validation$user_id = NULL
+validation$item_id = NULL
+# Move columns
+validation <- validation %>%
+  select(user_item, everything()) 
+validation <- validation %>%
+  select(prediction, everything()) 
+colnames(validation) = c("rating","user_item")
+validation$rating = floor(validation$rating)
+# Remove all other columns
+validation = validation[,1:2]
+# Check if any rating > 5 (wrong)
+which(validation$rating > 5L)
+which(validation$rating < 0L)
+# Save to file
+write.csv(validation, file = 'AT2_UPLOAD.csv',quote = FALSE, row.names = FALSE)
+
+
+glimpse(train[which(is.na(train$item_imdb_staff_votes) == TRUE),])
+glimpse(scrape[which(scrape$movie_id == "103"),])
+
