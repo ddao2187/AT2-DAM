@@ -579,6 +579,7 @@ validation$user_item = paste(validation$user_id, validation$item_id, sep = "_")
 validation$user_id = NULL
 validation$item_id = NULL
 # Move columns
+
 validation <- validation %>%
   select(user_item, everything()) 
 validation <- validation %>%
@@ -593,7 +594,5 @@ which(validation$rating < 0L)
 # Save to file
 write.csv(validation, file = 'AT2_UPLOAD.csv',quote = FALSE, row.names = FALSE)
 
-
 glimpse(train[which(is.na(train$item_imdb_staff_votes) == TRUE),])
 glimpse(scrape[which(scrape$movie_id == "103"),])
-
