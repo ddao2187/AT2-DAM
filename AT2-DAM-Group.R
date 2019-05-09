@@ -176,7 +176,7 @@ rm(occupation_mean_ratings_train,zipcode_mean_ratings_train) # Clean
 train = train[,c(1,6,7,                   # Main
                  33:36,41,43,44,47,49:51, # Rating (7:14 ~ Rating of 10, 3:5 ~ Rating of 5)
                  37,40,42,45,46,48,       # Vote number (15:19)
-                 38,39,2:5,8:31)]         # Others
+                 38,39,2:5,8:31,32)]         # Others
 validation = validation[,names(train[,-3])] # Copy column order to validation
 names(validation) == names(train[,-3]) # Check
 
@@ -207,16 +207,16 @@ train$imdb_url = NULL
 # The rating based on age is already being calculated
 validation$age  = NULL
 train$age = NULL
-validation$age_band  = NULL
-train$age_band = NULL
+#validation$age_band  = NULL
+#train$age_band = NULL
 # The rating based on gender is already being calculated
-validation$gender  = NULL
-train$gender = NULL
+#validation$gender  = NULL
+#train$gender = NULL
 # Drop variables occupation and zip_code because already calculated the rating
-train$zip_code   = NULL
-validation$zip_code    = NULL
-train$occupation = NULL
-validation$occupation  = NULL
+#train$zip_code   = NULL
+#validation$zip_code    = NULL
+#train$occupation = NULL
+#validation$occupation  = NULL
 
 ##########################################
 ##### Drop variables with reasonings ##### 
@@ -361,6 +361,18 @@ validation[,6:11] = validation[,6:11] / 2L
 ###############
 ##### EDA #####
 ###############
+# Data summary: (train)
+# 1:3 ~ user_id, item_id, rating
+# 4:6 ~ item_mean_rating, user_age_band_item_mean_rating, user_gender_item_mean_rating
+# 7:14 ~ item_imdb_rating_of_ten(*), item_imdb_staff_average(*), item_imdb_top_1000_voters_average (*)
+#        user_age_band_item_imdb_mean_rating, user_gender_age_band_item_imdb_mean_rating
+#        user_gender_item_imdb_mean_rating, zipcode_mean_rating, occupation_mean_rating
+# 15:20 ~ item_imdb_count_ratings, item_imdb_staff_votes, item_imdb_top_1000_voters_votes
+#         user_gender_item_imdb_votes, user_age_band_item_imdb_votes, user_gender_age_band_item_imdb_votes
+# 21:31 ~ Others
+# 31:50 ~ Genres
+# * = Good predictor
+
 ##### Plot rating based on genres
 # Note: Run from line 1 to 182 first
 genres.df = train[,32:50]
@@ -386,17 +398,98 @@ rm(i,j,count,genres.df,record)
 ############
 # Decision: Genres ranges from 3.199629 to 3.916488 out of 5: Not significant => Drop all genres.
 ############
+##### Plot rating based on check
+## By Users
+check = "item_mean_rating"
+#check = "user_age_band_item_mean_rating"
+#check = "user_gender_item_mean_rating"
 
-##### Plot rating based on IMDB rating
+# Gender, mature rating, movie length, occupation
+p1 <- ggplot(data=train, aes(x=timestamp_year)) + 
+  geom_bar(fill="blue") + 
+  xlab("Movie timestamp_year") +
+  theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+p2 <- ggplot(data=train, aes(x=release_year)) + 
+  geom_bar(fill="blue") + 
+  xlab("Movie release_year") +
+  theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+p3 <- ggplot(data=train, aes(x=timestamp_month)) + 
+  geom_bar(fill="blue") + 
+  xlab("Movie timestamp_month") +
+  theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+p4 <- ggplot(data=train, aes(x=release_month)) + 
+  geom_bar(fill="blue") + 
+  xlab("Movie release_month") +
+  theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+grid.arrange(p2, p3, p1, p4, nrow=2,
+             top="Movie EDA")
+
+# Timestamp, release date, zipcode
+p1 <- ggplot(data=train, aes(x=timestamp)) + 
+  geom_bar(fill="blue") + 
+  xlab("Movie timestamp") +
+  theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+p2 <- ggplot(data=train, aes(x=release_date)) + 
+  geom_bar(fill="blue") + 
+  xlab("Movie release_date") +
+  theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+p3 <- ggplot(data=train, aes(x=zip_code)) + 
+  geom_bar(fill="blue") + 
+  xlab("Movie zip_code") +
+  theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+grid.arrange(p2, p3, p1, nrow=2,
+             top="Movie EDA")
+# Note no EDA on title yet
+
+
+
+
+
+
+## By ratings
+#check = "item_imdb_rating_of_ten"
+#check = "item_imdb_staff_average"
+#check = "item_imdb_top_1000_voters_average"
+#check = "user_age_band_item_imdb_mean_rating"
+#check = "user_gender_age_band_item_imdb_mean_rating"
+#check = "user_gender_item_imdb_mean_rating"
+#check = "zipcode_mean_rating"
+#check = "occupation_mean_rating"
+#check = "user_age_band_item_imdb_mean_rating"
+
+## By vote numbers
+#check = "item_imdb_count_ratings"
+#filt = filter(train, occupation == "student")
 var1 = train %>%
-  select_at(vars("user_id","rating","item_imdb_rating_of_ten")) %>%
-  group_by(user_id) %>%
-  summarise_all("mean")
-var1$rating = round(var1$rating, digit = 1)
+  select_at(vars("user_id","rating",check))
+var1 = aggregate(var1[,2:3], list(var1$user_id),mean)
+var1$rating = floor(var1$rating)
 # Plot
-ggplot(data = var1, aes(x = rating, y = item_imdb_rating_of_ten)) +
-  geom_jitter() +  geom_smooth(method = "lm") + ggtitle("Rating of User vs. IMDB")
+ggplot(data = var1, aes(x = rating, y = check)) +
+  geom_jitter() + ggtitle(check)
 rm(var1) # Clean
+# Check if this predictor has any unexpected values
+length(which(train[,check] > 10 | train[,check] < 0))
+
+# Plot by average rating
+var1 = train %>%
+  select_at(vars("rating",check)) %>%
+  group_by(rating) %>%
+  summarise_all("mean")
+var1$rating = floor(var1$rating)
+# Plot
+ggplot(data = var1, aes(x = rating, y = check)) +
+  geom_jitter() + ggtitle(check)
+rm(var1) # Clean
+
+
+##################
+
+
+
+
+
+
 
 ##### Plot rating based on top 1000 rating
 var1 = train %>%
@@ -483,47 +576,23 @@ check = table(validation$occupation)
 
 
 
-#######################
-##### Play ground #####
-#######################
-##### Test drop variables
-#train_n$user_age_band_item_mean_rating = NULL # R = 0.4087 & 0.3738
-#train_n$user_gender_item_mean_rating = NULL # R = 0.437 & 0.4038  
-#train_n$item_imdb_rating_of_ten = NULL # 0.4452 & 0.4125
-#train_n$item_imdb_top_1000_voters_average = NULL # 0.4477 & 0.4151 (Slight increase adjusted)
-#train_n$user_gender_item_imdb_mean_rating = NULL # 0.4463 & 0.4136
-#train_n$user_age_band_item_imdb_mean_rating = NULL # 0.4476 & 0.415
-#train_n$user_gender_age_band_item_imdb_mean_rating = NULL # 0.4477 & 0.4151 (Slight increase adjusted)
-
-#train_n$item_imdb_staff_votes = NULL
-#train_n$user_gender_item_imdb_votes = NULL
-#train_n$user_gender_age_band_item_imdb_votes = NULL
-#train_n$user_age_band_item_imdb_votes = NULL
-
-# Multi-collinearity check
-num_vars = unlist(lapply(train_n, is.numeric))  
-re_nums  = train_n[,num_vars]
-re_corr  = cor(re_nums, use = "complete.obs")
-corrplot::corrplot(re_corr, method="number")
-rm(num_vars,re_nums,re_corr) # Clean
-# Note: Remove all variables >= 0.8 corelation
 
 ####################
 ##### Cheating #####
 ####################
-#trainset_indices <- sample(seq_len(nrow(train)), size = 20000) # Reduce the data size
+#trainset_indices <- sample(seq_len(nrow(train)), size = 5000) # Reduce the data size
 #train_n <- train[trainset_indices, ]
 train_n = train
 train_n = train_n[order(train_n$item_id),] # Re-order by item_id
+validation_n = validation
 #rm(trainset_indices)
-
 # Temporary drop to make regression running (able to make prediction)
 train_n$movie_title = NULL
-validation$movie_title = NULL
+validation_n$movie_title = NULL
 train_n$release_date = NULL
-validation$release_date = NULL
+validation_n$release_date = NULL
 train_n$timestamp = NULL
-validation$timestamp = NULL
+validation_n$timestamp = NULL
 #train_n$item_imdb_mature_rating = NULL
 #validation$item_imdb_mature_rating = NULL
 # Factor rating
@@ -531,7 +600,7 @@ validation$timestamp = NULL
 
 # Replace all NA values by 0
 train_n[is.na(train_n)] <- 0
-validation[is.na(validation)] <- 0
+validation_n[is.na(validation_n)] <- 0
 
 #############################
 ##### Linear Regression #####
@@ -552,12 +621,14 @@ for (i in 1:nrow(train_n)) {
   }
 }
 rm(i,dummy,count)
+train_n$user_id = factor(train_n$user_id)
+train_n$item_id = factor(train_n$item_id)
 # Check
 length(unique(train_n$item_id)) == length(unique(testset$item_id))
 # Train the model
-regres <- glm(rating ~ ., data=train_n)
+regres <- glm(rating ~ ., data=train_n[,3:ncol(train_n)]) # Exclude item_id and user_id for regression
 # Rate RMSE
-testset$prediction = predict(regres, testset, type = "response")
+testset$prediction = predict(regres, testset[,3:ncol(testset)], type = "response")
 # Check if any rating > 5 (wrong)
 testset$prediction = floor(testset$prediction)
 which(testset$prediction > 5L)
@@ -573,26 +644,105 @@ rm(train_n,testset) # Clean
 ####################
 ##### FINALIZE #####
 ####################
-validation$prediction = predict(regres, validation, type = "response")
+validation_n$prediction = predict(regres, validation_n[,3:ncol(validation_n)], type = "response")
 ##### Concatenate user_id and item_id together then remove the 2 used variables for both testset and train
-validation$user_item = paste(validation$user_id, validation$item_id, sep = "_")
-validation$user_id = NULL
-validation$item_id = NULL
+validation_n$user_item = paste(validation_n$user_id, validation_n$item_id, sep = "_")
+validation_n$user_id = NULL
+validation_n$item_id = NULL
 # Move columns
-
-validation <- validation %>%
+validation_n <- validation_n %>%
   select(user_item, everything()) 
-validation <- validation %>%
+validation_n <- validation_n %>%
   select(prediction, everything()) 
-colnames(validation) = c("rating","user_item")
-validation$rating = floor(validation$rating)
+colnames(validation_n) = c("rating","user_item")
+validation_n$rating = floor(validation_n$rating)
 # Remove all other columns
-validation = validation[,1:2]
+validation_n = validation_n[,1:2]
 # Check if any rating > 5 (wrong)
-which(validation$rating > 5L)
-which(validation$rating < 0L)
+which(validation_n$rating > 5L)
+which(validation_n$rating < 0L)
+#validation_n$rating[which(validation_n$rating < 0L)] = abs(validation_n$rating[which(validation_n$rating < 0L)])
+min(validation_n$rating)
 # Save to file
-write.csv(validation, file = 'AT2_UPLOAD.csv',quote = FALSE, row.names = FALSE)
+write.csv(validation_n, file = 'AT2_UPLOAD.csv',quote = FALSE, row.names = FALSE)
+rm(validation_n)
 
 glimpse(train[which(is.na(train$item_imdb_staff_votes) == TRUE),])
 glimpse(scrape[which(scrape$movie_id == "103"),])
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#######################
+##### Play ground #####
+#######################
+
+train_p = filter(train,item_id == 61)
+train_p[,27:31] = NULL
+train_p[,4] =NULL
+train_p[,26:44] =NULL
+train_p[,21] = NULL
+max(train_p$rating)
+histogram(train_p$rating)
+
+
+train_p1 = filter(train_p,occupation == "programmer")
+max(train_p1$rating)
+histogram(train_p1$rating)
+
+
+##### Test drop variables
+#train_n$user_age_band_item_mean_rating = NULL # R = 0.4087 & 0.3738
+#train_n$user_gender_item_mean_rating = NULL # R = 0.437 & 0.4038  
+#train_n$item_imdb_rating_of_ten = NULL # 0.4452 & 0.4125
+#train_n$item_imdb_top_1000_voters_average = NULL # 0.4477 & 0.4151 (Slight increase adjusted)
+#train_n$user_gender_item_imdb_mean_rating = NULL # 0.4463 & 0.4136
+#train_n$user_age_band_item_imdb_mean_rating = NULL # 0.4476 & 0.415
+#train_n$user_gender_age_band_item_imdb_mean_rating = NULL # 0.4477 & 0.4151 (Slight increase adjusted)
+
+#train_n$item_imdb_staff_votes = NULL
+#train_n$user_gender_item_imdb_votes = NULL
+#train_n$user_gender_age_band_item_imdb_votes = NULL
+#train_n$user_age_band_item_imdb_votes = NULL
+
+# Multi-collinearity check
+num_vars = unlist(lapply(train, is.numeric))  
+re_nums  = train[,num_vars]
+re_corr  = cor(re_nums, use = "complete.obs")
+corrplot::corrplot(re_corr, method="number")
+rm(num_vars,re_nums,re_corr) # Clean
+# Note: Remove all variables >= 0.8 corelation
+
+df = validation
+
+a = which(names(df) == "action")
+b = which(names(df) == "western")
+col_name = names(df)[a:b]
+test = matrix(ncol=18,nrow=1)
+colnames(test) = col_name
+for (i in 1:b-a+1) {
+  c = as.numeric(i+a-1)
+  test[,i] = length(which(df[,c] == TRUE))
+}
+
+barplot(test, main="validation Chart", xlab="Genres")
+
+new = filter(train,drama == TRUE)
+new_v = filter(validation,drama == TRUE)
+min(new$item_imdb_rating_of_ten)
+max(new$item_imdb_rating_of_ten)
+mean(new$item_imdb_rating_of_ten)
+
+
+
+
